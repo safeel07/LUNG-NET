@@ -10,7 +10,7 @@ Both architectures explicitly model inter-modality dependencies by replacing bas
 
 ---
 
-## 🛠️ Package Structure & Architecture
+##  Package Structure & Architecture
 
 The workspace is organized into clean, modular packages:
 
@@ -34,7 +34,7 @@ medical-proj/
 
 ---
 
-## 🔬 Core System Specifications
+##  Core System Specifications
 
 ### 1. 3D Vision Backbones
 *   **Swin-Transformer 3D:** Processes cubic tensors of shape `(B, 1, 64, 64, 64)` through volumetric patch embedding (4x4x4 patches), multi-stage shifted window self-attentions, and downsampling patch merging blocks to harvest `(B, 768)` multi-scale sequence tokens.
@@ -53,7 +53,7 @@ Calculates deterministic **3D Grad-CAM** activation maps by backpropagating logi
 
 ---
 
-## 🚦 Zero-Setup Quickstart
+##  Zero-Setup Quickstart
 
 The master orchestrator `run.py` is equipped with self-healing script hooks. It automatically checks and installs missing dependencies (such as `monai`, `plotly`, `streamlit`), compiles compatible model parameters `weights_cnn.pth` and `weights_swin.pth`, and starts the visual cockpit on port 8501.
 

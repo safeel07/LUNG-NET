@@ -181,13 +181,41 @@ def compute_integrated_risk(dl_risk, payload, volume):
     return float(np.clip(blended, 0.01, 0.99))
 
 
-def render_plotly_3d_volume(volume, heatmap):
+def apply_boundary_fade(arr):
+    """
+    Applies a smooth spherical cosine-tapered window to fade out values 
+    near the outer bounding edges of the 3D volume, ensuring clean transparency.
+    """
+    sz = arr.shape[0]
+    coords = np.linspace(-1.0, 1.0, sz)
+    x, y, z = np.meshgrid(coords, coords, coords, indexing='ij')
+    dist = np.sqrt(x**2 + y**2 + z**2)
+    
+    # Smooth cosine roll-off starting at r=0.72, fully zero at r=0.98
+    mask = np.ones_like(dist)
+    fade_start = 0.72
+    fade_end = 0.98
+    
+    mask = np.where(dist < fade_start, 1.0, mask)
+    roll_off = 0.5 * (1.0 + np.cos(np.pi * (dist - fade_start) / (fade_end - fade_start)))
+    mask = np.where((dist >= fade_start) & (dist < fade_end), roll_off, mask)
+    mask = np.where(dist >= fade_end, 0.0, mask)
+    
+    return arr * mask
+
+
+def render_plotly_3d_volume(volume, heatmap, isomin_ct=0.20, isomin_cam=0.35):
     """
     Renders high-performance interactive 3D volumetric raycasting using Plotly go.Volume.
+    Ensures perfect transparent boundaries by disabling outer caps and applying smooth border tapers.
     """
+    # Apply spatial fading mask to guarantee 100% border transparency
+    volume_faded = apply_boundary_fade(volume)
+    heatmap_faded = apply_boundary_fade(heatmap)
+    
     # Downsample by 2 to secure fast browser load and rotation responses
-    vol_ds = volume[::2, ::2, ::2]
-    heat_ds = heatmap[::2, ::2, ::2]
+    vol_ds = volume_faded[::2, ::2, ::2]
+    heat_ds = heatmap_faded[::2, ::2, ::2]
     sz = vol_ds.shape[0]
     
     x, y, z = np.mgrid[0:sz, 0:sz, 0:sz]
@@ -200,16 +228,17 @@ def render_plotly_3d_volume(volume, heatmap):
     # 1. Structural Pulmonary CT Nodule (Grayscale volume)
     fig.add_trace(go.Volume(
         x=x_flat, y=y_flat, z=z_flat, value=vol_flat,
-        isomin=0.22, isomax=1.0, opacity=0.08,
-        surface_count=12, colorscale='gray',
-        showscale=False, name='Structural CT'
+        isomin=isomin_ct, isomax=1.0, opacity=0.06,
+        surface_count=20, colorscale='gray',
+        showscale=False, name='Structural CT',
+        caps=dict(x_show=False, y_show=False, z_show=False)  # CRITICAL: Disable box caps
     ))
     
     # 2. Swin Attentions Grad-CAM heatmap (Jet thermal volume)
     fig.add_trace(go.Volume(
         x=x_flat, y=y_flat, z=z_flat, value=heat_flat,
-        isomin=0.30, isomax=1.0, opacity=0.30,
-        surface_count=10, colorscale='Jet',
+        isomin=isomin_cam, isomax=1.0, opacity=0.32,
+        surface_count=18, colorscale='Jet',
         colorbar=dict(
             title=dict(
                 text="Attended Nodular Density",
@@ -218,7 +247,8 @@ def render_plotly_3d_volume(volume, heatmap):
             tickfont=dict(color='#94a3b8', size=10),
             len=0.7
         ),
-        name='Swin Grad-CAM'
+        name='Swin Grad-CAM',
+        caps=dict(x_show=False, y_show=False, z_show=False)  # CRITICAL: Disable box caps
     ))
     
     fig.update_layout(
@@ -297,6 +327,15 @@ except Exception as val_err:
     st.stop()
 
 
+# Initialize session state flags for sticky diagnostics results
+if 'diagnostics_run' not in st.session_state:
+    st.session_state.diagnostics_run = False
+    st.session_state.active_volume = None
+    st.session_state.gradcam_heatmap = None
+    st.session_state.calibrated_risk = None
+    st.session_state.report_dict = None
+    st.session_state.latency_ms = 0.0
+
 # ----------------------------------------------------
 # COMPLETE INTERACTION BARRIER LAW
 # ----------------------------------------------------
@@ -304,18 +343,7 @@ st.sidebar.markdown("---")
 st.sidebar.caption("💡 Execute diagnostics using all sidebar configurations explicitly:")
 run_diagnostics = st.sidebar.button("Run Diagnostics Pipeline", use_container_width=True)
 
-if not run_diagnostics:
-    # Render Clean Standby Non-computed View
-    st.markdown(f"""
-    <div class="diagnostic-standby">
-        <div style="font-size: 3rem; margin-bottom: 15px;">🩻</div>
-        <strong>[DIAGNOSTICS PLATFORM STANDBY]</strong><br>
-        Fill in all patient parameters in the sidebar, upload a NIfTI scan, and click<br>
-        <span style="color: #38bdf8; font-weight: 600;">"Run Diagnostics Pipeline"</span> in the sidebar to execute multi-modal risk evaluation.
-    </div>
-    """, unsafe_allow_html=True)
-    
-else:
+if run_diagnostics:
     # Master Execution Triggered!
     st.toast("Executing Advanced Multi-Modal Inference...")
     t_start = time.perf_counter()
@@ -354,6 +382,39 @@ else:
     t_end = time.perf_counter()
     latency_ms = (t_end - t_start) * 1000.0
     
+    # Store results in session state to make them sticky
+    st.session_state.diagnostics_run = True
+    st.session_state.active_volume = active_volume
+    st.session_state.gradcam_heatmap = gradcam_heatmap
+    st.session_state.calibrated_risk = calibrated_risk
+    st.session_state.report_dict = report_dict
+    st.session_state.latency_ms = latency_ms
+
+# Reset button inside the sidebar for easy diagnostics clearing
+if st.session_state.diagnostics_run:
+    if st.sidebar.button("Clear Diagnostics / Standby", use_container_width=True):
+        st.session_state.diagnostics_run = False
+        st.rerun()
+
+if not st.session_state.diagnostics_run:
+    # Render Clean Standby Non-computed View
+    st.markdown(f"""
+    <div class="diagnostic-standby">
+        <div style="font-size: 3rem; margin-bottom: 15px;">🩻</div>
+        <strong>[DIAGNOSTICS PLATFORM STANDBY]</strong><br>
+        Fill in all patient parameters in the sidebar, upload a NIfTI scan, and click<br>
+        <span style="color: #38bdf8; font-weight: 600;">"Run Diagnostics Pipeline"</span> in the sidebar to execute multi-modal risk evaluation.
+    </div>
+    """, unsafe_allow_html=True)
+    
+else:
+    # Retrieve stored sticky diagnostics parameters
+    active_volume = st.session_state.active_volume
+    gradcam_heatmap = st.session_state.gradcam_heatmap
+    calibrated_risk = st.session_state.calibrated_risk
+    report_dict = st.session_state.report_dict
+    latency_ms = st.session_state.latency_ms
+
     # Layout Results
     col_l, col_r = st.columns([1, 1.2], gap="large")
     
@@ -388,7 +449,14 @@ else:
         st.markdown("### 🩻 3D Volumetric Raycast Explainability Map")
         st.caption("Interactive Plotly volume rendering structural CT overlaid with Swin self-attention Grad-CAM hot zones:")
         
-        fig_raycast = render_plotly_3d_volume(active_volume, gradcam_heatmap)
+        # Interactive threshold sliders for real-time detailed peeling
+        col_t1, col_t2 = st.columns(2)
+        with col_t1:
+            isomin_ct = st.slider("CT Iso-Surface Threshold", 0.05, 0.95, 0.20, step=0.01)
+        with col_t2:
+            isomin_cam = st.slider("Attention Focus Threshold", 0.05, 0.95, 0.35, step=0.01)
+            
+        fig_raycast = render_plotly_3d_volume(active_volume, gradcam_heatmap, isomin_ct, isomin_cam)
         st.plotly_chart(fig_raycast, use_container_width=True)
         
         st.markdown(f"""
