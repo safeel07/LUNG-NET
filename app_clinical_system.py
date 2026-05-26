@@ -139,11 +139,14 @@ def load_swin_classifier():
         root = os.path.dirname(os.path.abspath(__file__))
         weights_path = os.path.join(root, "weights_swin.pth")
         
-        if not os.path.exists(weights_path):
-            # Generate mock weights to prevent immediate start exceptions
-            torch.save(model.state_dict(), weights_path)
+        if os.path.exists(weights_path):
+            try:
+                model.load_state_dict(torch.load(weights_path, map_location=torch.device('cpu')))
+            except Exception as load_err:
+                print(f"[LOAD WARNING] Swin weights load failure (using in-memory initialization): {load_err}")
+        else:
+            print("[LOAD INFO] Swin weights_swin.pth not found. Using initialized in-memory parameters.")
             
-        model.load_state_dict(torch.load(weights_path, map_location=torch.device('cpu')))
         model.to(device)
         model.eval()
         return model
