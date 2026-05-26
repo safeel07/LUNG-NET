@@ -1,0 +1,15 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyTorch weights (Can be dynamically generated on launch)
+weights.pth
+
+# Streamlit logs & local configurations
+.streamlit/
+*.log
+
+# OS metadata
+.DS_Store
+Thumbs.db
