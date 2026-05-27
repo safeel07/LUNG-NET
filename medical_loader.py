@@ -15,6 +15,27 @@ except ImportError:
     SCIPY_AVAILABLE = False
 
 
+def segment_distance(X, Y, Z, A, B):
+    """
+    Computes the shortest distance from each grid point (X, Y, Z) to a 3D line segment AB.
+    """
+    A = np.array(A, dtype=float)
+    B = np.array(B, dtype=float)
+    dx, dy, dz = B[0] - A[0], B[1] - A[1], B[2] - A[2]
+    len_sq = dx*dx + dy*dy + dz*dz
+    if len_sq == 0:
+        return np.sqrt((X - A[0])**2 + (Y - A[1])**2 + (Z - A[2])**2)
+    
+    # Projection t of AP onto AB clamped to [0.0, 1.0]
+    t = ((X - A[0])*dx + (Y - A[1])*dy + (Z - A[2])*dz) / len_sq
+    t = np.clip(t, 0.0, 1.0)
+    
+    proj_x = A[0] + t*dx
+    proj_y = A[1] + t*dy
+    proj_z = A[2] + t*dz
+    return np.sqrt((X - proj_x)**2 + (Y - proj_y)**2 + (Z - proj_z)**2)
+
+
 def generate_synthetic_ct_nodule(age=65, smoking_pack_years=48.0, egfr=0, kras=0, alk=0, background_hu=-700.0):
     """
     Generates a highly-realistic, anatomically structured 3D isotropic lung lobe segment (64x64x64)
@@ -38,10 +59,19 @@ def generate_synthetic_ct_nodule(age=65, smoking_pack_years=48.0, egfr=0, kras=0
     z_norm = np.clip((26 - Z) / 52, 0.0, 1.0)
     taper_r = 0.35 + 0.85 * z_norm  # Taper scale factor along height
     
+    # Costal Rib impressions: periodic wave perturbation along the outer lateral borders
+    phi_angle = np.arctan2(Y, X)
+    costal_ridges = 1.0 + 0.038 * np.cos(0.95 * Z) * np.cos(5.5 * phi_angle)
+    
+    # Mediastinal concavity exclusion mask (carving the inner flat/concave walls of both lungs)
+    mediastinum_dist = (X / 6.5)**2 + ((Y + 3.5) / 10.5)**2
+    mediastinum_mask = mediastinum_dist > 1.0
+    
+    # Apply taper and costal rib impressions to ellipsoids
     # Right Lobe (centered at X = -13, Y = 1, Z = -2)
-    right_lobe_dist = ((X + 13.5) / (12.0 * taper_r))**2 + ((Y - 1) / (15.0 * taper_r))**2 + ((Z + 2) / 22.0)**2
+    right_lobe_dist = ((X + 13.5) / (12.0 * taper_r * costal_ridges))**2 + ((Y - 1) / (15.0 * taper_r * costal_ridges))**2 + ((Z + 2) / 22.0)**2
     # Left Lobe (centered at X = 13, Y = 1, Z = -2)
-    left_lobe_dist = ((X - 13.5) / (11.0 * taper_r))**2 + ((Y - 1) / (15.0 * taper_r))**2 + ((Z + 2) / 22.0)**2
+    left_lobe_dist = ((X - 13.5) / (11.0 * taper_r * costal_ridges))**2 + ((Y - 1) / (15.0 * taper_r * costal_ridges))**2 + ((Z + 2) / 22.0)**2
     
     # Left Lobe Cardiac Notch: sphere subtraction in lower medial posterior region
     cardiac_notch = ((X - 6.5) / 8.5)**2 + ((Y - 6.0) / 8.5)**2 + ((Z + 6.0) / 9.5)**2
@@ -50,19 +80,16 @@ def generate_synthetic_ct_nodule(age=65, smoking_pack_years=48.0, egfr=0, kras=0
     diaphragm_dist = np.sqrt(X**2 + Y**2 + (Z + 36.0)**2)
     diaphragm_mask = diaphragm_dist > 22.0
     
-    # Build lung parenchymal masks
-    right_lung_base = (right_lobe_dist <= 1.0) & (Z > -22) & (Z < 24) & diaphragm_mask
-    left_lung_base = (left_lobe_dist <= 1.0) & (Z > -22) & (Z < 24) & (cardiac_notch > 0.85) & diaphragm_mask
+    # Build lung parenchymal masks (applying mediastinal exclusion and rib ridges)
+    right_lung_base = (right_lobe_dist <= 1.0) & (Z > -22) & (Z < 24) & diaphragm_mask & mediastinum_mask
+    left_lung_base = (left_lobe_dist <= 1.0) & (Z > -22) & (Z < 24) & (cardiac_notch > 0.85) & diaphragm_mask & mediastinum_mask
     
     # 3. Sculpt Anatomical Fissures
     # Right Lung: oblique fissure (dividing superior/inferior) & horizontal fissure (superior/middle)
-    # Oblique plane: Z = 0.5 * Y - 2
     right_oblique = np.abs(Z - 0.5 * Y + 2.0) > 1.2
-    # Horizontal plane: Z = 4.0 (for anterior/outer region, X < -12)
     right_horizontal = ~((X < -10) & (Y < 6) & (np.abs(Z - 4.0) < 1.2))
     
     # Left Lung: oblique fissure (dividing superior/inferior)
-    # Oblique plane: Z = 0.5 * Y - 2
     left_oblique = np.abs(Z - 0.5 * Y + 2.0) > 1.2
     
     right_lung_mask = right_lung_base & right_oblique & right_horizontal
@@ -87,18 +114,17 @@ def generate_synthetic_ct_nodule(age=65, smoking_pack_years=48.0, egfr=0, kras=0
     volume_hu = np.where(right_lung_mask | left_lung_mask, parenchyma_hu, volume_hu)
     
     # 5. Add branching trachea and bronchial airways (air density -950 HU with high-density walls +100 HU)
-    # Trachea tube (centered at X=0, Y=-2, running down from Z=24 to Z=6)
     trachea_dist = np.sqrt(X**2 + (Y + 2.0)**2)
     trachea_air = (trachea_dist < 1.8) & (Z >= 6) & (Z < 26)
     trachea_wall = (trachea_dist >= 1.8) & (trachea_dist < 2.8) & (Z >= 6) & (Z < 26)
     
-    # Right Main Bronchus tube (connecting trachea bifurcation at Z=6 to right lung)
+    # Right Main Bronchus tube
     t1 = np.clip((6 - Z) / 10.0, 0.0, 1.0)
     bronch_r_dist = np.sqrt((X - (-10.0 * t1))**2 + (Y - (-2.0 + 2.0 * t1))**2 + (Z - (6 - 10.0 * t1))**2)
     bronch_r_air = (bronch_r_dist < 1.2) & (Z < 6) & (Z > -6)
     bronch_r_wall = (bronch_r_dist >= 1.2) & (bronch_r_dist < 2.0) & (Z < 6) & (Z > -6)
     
-    # Left Main Bronchus tube (connecting trachea bifurcation at Z=6 to left lung)
+    # Left Main Bronchus tube
     t2 = np.clip((6 - Z) / 10.0, 0.0, 1.0)
     bronch_l_dist = np.sqrt((X - (10.0 * t2))**2 + (Y - (-2.0 + 2.0 * t2))**2 + (Z - (6 - 10.0 * t2))**2)
     bronch_l_air = (bronch_l_dist < 1.2) & (Z < 6) & (Z > -6)
@@ -108,6 +134,43 @@ def generate_synthetic_ct_nodule(age=65, smoking_pack_years=48.0, egfr=0, kras=0
     volume_hu = np.where(trachea_wall | bronch_r_wall | bronch_l_wall, np.random.normal(loc=100.0, scale=15.0, size=(grid_size, grid_size, grid_size)), volume_hu)
     # Inject Airway Lumens (-950 HU)
     volume_hu = np.where(trachea_air | bronch_r_air | bronch_l_air, -950.0, volume_hu)
+
+    # 5b. Add highly detailed branching vascular / blood vessel tree segments
+    # Define primary, secondary, and tertiary vascular branches spreading inside lung parenchyma
+    vascular_segments = [
+        # --- Right Lung Vascular Tree ---
+        ([-8.0, -1.0, 2.0], [-14.0, -2.0, 12.0], 1.6),       # Right Upper Lobe Main
+        ([-14.0, -2.0, 12.0], [-16.0, -3.0, 20.0], 1.0),     # Right Apex Segment
+        ([-14.0, -2.0, 12.0], [-20.0, 4.0, 14.0], 0.9),      # Right Anterior Segment
+        ([-8.0, -1.0, 2.0], [-15.0, 5.0, 2.0], 1.4),         # Right Middle Lobe Main
+        ([-15.0, 5.0, 2.0], [-21.0, 8.0, 3.0], 0.8),         # Middle Branch 1
+        ([-15.0, 5.0, 2.0], [-18.0, 6.0, -4.0], 0.8),        # Middle Branch 2
+        ([-8.0, -1.0, 2.0], [-14.0, -2.0, -8.0], 1.8),       # Right Lower Lobe Main
+        ([-14.0, -2.0, -8.0], [-18.0, -6.0, -18.0], 1.1),    # Right Posterior Basal
+        ([-14.0, -2.0, -8.0], [-22.0, 2.0, -14.0], 1.0),     # Right Lateral Basal
+        
+        # --- Left Lung Vascular Tree ---
+        ([8.0, -1.0, 2.0], [14.0, -2.0, 11.0], 1.6),         # Left Upper Lobe Main
+        ([14.0, -2.0, 11.0], [16.0, -3.0, 19.0], 1.0),       # Left Apex Segment
+        ([14.0, -2.0, 11.0], [20.0, 4.0, 12.0], 0.9),        # Left Anterior Segment
+        ([8.0, -1.0, 2.0], [13.0, -2.0, -8.0], 1.8),         # Left Lower Lobe Main
+        ([13.0, -2.0, -8.0], [17.0, -6.0, -18.0], 1.1),      # Left Posterior Basal
+        ([13.0, -2.0, -8.0], [21.0, 2.0, -14.0], 1.0),       # Left Lateral Basal
+    ]
+    
+    combined_vessels_mask = np.zeros_like(X)
+    for A_pt, B_pt, rad in vascular_segments:
+        d = segment_distance(X, Y, Z, A_pt, B_pt)
+        env = np.clip((rad - d) / 0.8, 0.0, 1.0)
+        combined_vessels_mask = np.maximum(combined_vessels_mask, env)
+        
+    vessel_intensity = np.random.normal(loc=80.0, scale=12.0, size=(grid_size, grid_size, grid_size))
+    # Apply blood vessels exclusively inside the left and right lung lobes parenchyma masks
+    volume_hu = np.where(
+        right_lung_mask | left_lung_mask,
+        volume_hu + combined_vessels_mask * (vessel_intensity - volume_hu),
+        volume_hu
+    )
     
     # 6. DYNAMIC MALIGNANT PATHOLOGY GENERATION
     # The infection tumor nodule's radius, spiculation density, and satellite lesions grow
