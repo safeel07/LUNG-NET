@@ -15,13 +15,14 @@ except ImportError:
     SCIPY_AVAILABLE = False
 
 
-def generate_synthetic_ct_nodule(radius=8.0, intensity_hu=150.0, background_hu=-700.0):
+def generate_synthetic_ct_nodule(age=65, smoking_pack_years=48.0, egfr=0, kras=0, alk=0, background_hu=-700.0):
     """
     Generates a highly-realistic, anatomically structured 3D isotropic lung lobe segment (64x64x64)
-    containing Left & Right Lung Lobes, a medial Cardiac Notch inside the Left Lobe, a central
-    Trachea & main Bronchus tree system, low-density lung parenchyma air cavities (-700 HU),
-    and a localized spiculed malignant nodule pathology (+150 HU) situated inside the upper right lobe
-    surrounded by GGO (ground-glass opacity) infectious infiltrate.
+    containing Left & Right Lung Lobes, Oblique & Horizontal Lobe Fissures, a medial Cardiac Notch inside
+    the Left Lobe, a concave Diaphragmatic base, a branching Trachea & bronchial tree system, low-density
+    lung parenchyma air cavities (-700 HU), smoking-induced emphysematous pockets, and a localized, spiculed
+    malignant nodule pathology (+150 HU) situated inside the upper right lobe surrounded by a ground-glass
+    opacity (GGO) infectious infiltrate, all dynamically scaled based on clinical patient parameters.
     """
     grid_size = 64
     x = np.linspace(-32, 32, grid_size)
@@ -38,22 +39,54 @@ def generate_synthetic_ct_nodule(radius=8.0, intensity_hu=150.0, background_hu=-
     taper_r = 0.35 + 0.85 * z_norm  # Taper scale factor along height
     
     # Right Lobe (centered at X = -13, Y = 1, Z = -2)
-    right_lobe_dist = ((X + 13) / (11.5 * taper_r))**2 + ((Y - 1) / (14.5 * taper_r))**2 + ((Z + 2) / 22.0)**2
+    right_lobe_dist = ((X + 13.5) / (12.0 * taper_r))**2 + ((Y - 1) / (15.0 * taper_r))**2 + ((Z + 2) / 22.0)**2
     # Left Lobe (centered at X = 13, Y = 1, Z = -2)
-    left_lobe_dist = ((X - 13) / (10.5 * taper_r))**2 + ((Y - 1) / (14.5 * taper_r))**2 + ((Z + 2) / 22.0)**2
+    left_lobe_dist = ((X - 13.5) / (11.0 * taper_r))**2 + ((Y - 1) / (15.0 * taper_r))**2 + ((Z + 2) / 22.0)**2
     
     # Left Lobe Cardiac Notch: sphere subtraction in lower medial posterior region
     cardiac_notch = ((X - 6.5) / 8.5)**2 + ((Y - 6.0) / 8.5)**2 + ((Z + 6.0) / 9.5)**2
     
-    # Build lung parenchymal masks
-    right_lung_mask = (right_lobe_dist <= 1.0) & (Z > -22) & (Z < 24)
-    left_lung_mask = (left_lobe_dist <= 1.0) & (Z > -22) & (Z < 24) & (cardiac_notch > 0.85)
+    # Diaphragmatic Dome Concavity: subtract a curved dome from the base of both lungs (Z < -14)
+    diaphragm_dist = np.sqrt(X**2 + Y**2 + (Z + 36.0)**2)
+    diaphragm_mask = diaphragm_dist > 22.0
     
-    # Fill lung parenchyma with visible density (-700 HU) with minor noise
-    parenchyma_hu = np.random.normal(loc=background_hu, scale=15.0, size=(grid_size, grid_size, grid_size))
+    # Build lung parenchymal masks
+    right_lung_base = (right_lobe_dist <= 1.0) & (Z > -22) & (Z < 24) & diaphragm_mask
+    left_lung_base = (left_lobe_dist <= 1.0) & (Z > -22) & (Z < 24) & (cardiac_notch > 0.85) & diaphragm_mask
+    
+    # 3. Sculpt Anatomical Fissures
+    # Right Lung: oblique fissure (dividing superior/inferior) & horizontal fissure (superior/middle)
+    # Oblique plane: Z = 0.5 * Y - 2
+    right_oblique = np.abs(Z - 0.5 * Y + 2.0) > 1.2
+    # Horizontal plane: Z = 4.0 (for anterior/outer region, X < -12)
+    right_horizontal = ~((X < -10) & (Y < 6) & (np.abs(Z - 4.0) < 1.2))
+    
+    # Left Lung: oblique fissure (dividing superior/inferior)
+    # Oblique plane: Z = 0.5 * Y - 2
+    left_oblique = np.abs(Z - 0.5 * Y + 2.0) > 1.2
+    
+    right_lung_mask = right_lung_base & right_oblique & right_horizontal
+    left_lung_mask = left_lung_base & left_oblique
+    
+    # Fill lung parenchyma with visible density (-700 HU) with noise
+    parenchyma_hu = np.random.normal(loc=background_hu, scale=18.0, size=(grid_size, grid_size, grid_size))
+    
+    # 4. Smoking-induced parenchymal damage / emphysematous tissue destruction (-950 HU)
+    if smoking_pack_years > 20.0:
+        # Create noise bubbles for emphysema pockets
+        num_emphysema_centers = int(min(12, smoking_pack_years // 6))
+        for _ in range(num_emphysema_centers):
+            # Randomly place pockets inside both lungs
+            rand_x = np.random.uniform(-20.0, 20.0)
+            rand_y = np.random.uniform(-10.0, 10.0)
+            rand_z = np.random.uniform(-15.0, 15.0)
+            pocket_r = np.random.uniform(2.5, 4.5)
+            pocket_dist = np.sqrt((X - rand_x)**2 + (Y - rand_y)**2 + (Z - rand_z)**2)
+            parenchyma_hu = np.where(pocket_dist < pocket_r, np.random.normal(-920.0, 10.0, size=(grid_size, grid_size, grid_size)), parenchyma_hu)
+            
     volume_hu = np.where(right_lung_mask | left_lung_mask, parenchyma_hu, volume_hu)
     
-    # 3. Add branching trachea and bronchial airways (air density -950 HU with high-density walls +100 HU)
+    # 5. Add branching trachea and bronchial airways (air density -950 HU with high-density walls +100 HU)
     # Trachea tube (centered at X=0, Y=-2, running down from Z=24 to Z=6)
     trachea_dist = np.sqrt(X**2 + (Y + 2.0)**2)
     trachea_air = (trachea_dist < 1.8) & (Z >= 6) & (Z < 26)
@@ -76,8 +109,20 @@ def generate_synthetic_ct_nodule(radius=8.0, intensity_hu=150.0, background_hu=-
     # Inject Airway Lumens (-950 HU)
     volume_hu = np.where(trachea_air | bronch_r_air | bronch_l_air, -950.0, volume_hu)
     
-    # 4. Add the localized spiculed malignant nodule (situated inside right lung parenchyma)
-    # Upper-middle right lobe position: X=-12, Y=-2, Z=8
+    # 6. DYNAMIC MALIGNANT PATHOLOGY GENERATION
+    # The infection tumor nodule's radius, spiculation density, and satellite lesions grow
+    # in direct correlation with the patient's Age, Smoking history, and mutations.
+    base_radius = 3.5 + 0.12 * float(smoking_pack_years) + 0.04 * max(0.0, float(age) - 35.0)
+    
+    # Add mutation factor (+3.0mm per active mutation)
+    mutation_factor = 0.0
+    if float(egfr) > 0: mutation_factor += 3.0
+    if float(kras) > 0: mutation_factor += 3.0
+    if float(alk) > 0: mutation_factor += 3.0
+    
+    nodule_radius = np.clip(base_radius + mutation_factor, 2.5, 18.0)
+    
+    # Pathological center inside the Upper Right Lobe: X = -12, Y = -2, Z = 8
     nodule_center = np.array([-12.0, -2.0, 8.0])
     X_rel = X - nodule_center[0]
     Y_rel = Y - nodule_center[1]
@@ -85,27 +130,41 @@ def generate_synthetic_ct_nodule(radius=8.0, intensity_hu=150.0, background_hu=-
     
     dist_nodule = np.sqrt(X_rel**2 + Y_rel**2 + Z_rel**2)
     
-    # Starburst spicular wave equation (8 lobulations on spherical coordinates)
+    # Starburst spicular wave equation (spicules become more aggressive with higher smoking)
     phi = np.arctan2(Y_rel, X_rel)
     theta = np.arccos(np.clip(Z_rel / np.clip(dist_nodule, 1e-5, 100.0), -1.0, 1.0))
     
-    spicules = 2.5 * np.sin(8 * phi) * np.cos(8 * theta)
+    spicule_amp = 1.0 + 0.04 * float(smoking_pack_years)
+    spicules = spicule_amp * np.sin(8 * phi) * np.cos(8 * theta)
     spicular_dist = dist_nodule - spicules
     
-    # Nodule solid core transition
-    nodule_intensity = np.random.normal(loc=intensity_hu, scale=25.0, size=(grid_size, grid_size, grid_size))
-    nodule_transition = np.clip((radius - spicular_dist) / 2.0, 0.0, 1.0)
+    # Nodule core transition
+    nodule_intensity = np.random.normal(loc=150.0, scale=25.0, size=(grid_size, grid_size, grid_size))
+    nodule_transition = np.clip((nodule_radius - spicular_dist) / 2.0, 0.0, 1.0)
     
-    # 5. Add surrounding Ground-Glass Opacity (GGO) / Infectious consolidation infiltrate
+    # 7. Add surrounding Ground-Glass Opacity (GGO) / Infectious consolidation infiltrate
+    # The GGO spread also scales with the calculated disease aggressiveness
+    ggo_scale = 10.0 + 0.15 * float(smoking_pack_years) + 0.05 * float(age)
     infiltrate_density = np.random.normal(loc=-180.0, scale=35.0, size=(grid_size, grid_size, grid_size))
-    infiltrate_strength = np.exp(-(dist_nodule**2) / (2.0 * (11.0**2))) # Gaussian distribution
-    infiltrate_strength = np.clip(infiltrate_strength * 0.70, 0.0, 1.0)
+    infiltrate_strength = np.exp(-(dist_nodule**2) / (2.0 * (ggo_scale**2))) # Gaussian distribution
+    infiltrate_strength = np.clip(infiltrate_strength * 0.75, 0.0, 1.0)
     
     # Apply infiltrate and nodule core within the right lung parenchyma boundaries
     volume_hu = np.where(right_lung_mask, volume_hu + infiltrate_strength * (infiltrate_density - volume_hu), volume_hu)
     volume_hu = volume_hu + nodule_transition * (nodule_intensity - volume_hu)
     
-    # 6. Normalization scale according to lung tissue window [-1000 HU to 400 HU]
+    # 8. MULTI-FOCAL SATELLITE NODULES (If risk factors are extremely high)
+    if smoking_pack_years > 55.0 or (smoking_pack_years > 30.0 and mutation_factor > 0.0):
+        # Inject secondary small metastatic nodule in inferior left lung (X=14, Y=-2, Z=-12)
+        sat_center = np.array([14.0, -2.0, -12.0])
+        dist_sat = np.sqrt((X - sat_center[0])**2 + (Y - sat_center[1])**2 + (Z - sat_center[2])**2)
+        sat_trans = np.clip((3.5 - dist_sat) / 1.0, 0.0, 1.0)
+        sat_intensity = np.random.normal(loc=120.0, scale=20.0, size=(grid_size, grid_size, grid_size))
+        
+        # Apply satellite only inside left lung
+        volume_hu = np.where(left_lung_mask, volume_hu + sat_trans * (sat_intensity - volume_hu), volume_hu)
+        
+    # 9. Normalization scale according to lung tissue window [-1000 HU to 400 HU]
     hu_min, hu_max = -1000.0, 400.0
     normalized = (volume_hu - hu_min) / (hu_max - hu_min)
     normalized = np.clip(normalized, 0.0, 1.0)

@@ -339,7 +339,7 @@ if uploaded_file is not None:
 else:
     # Initialize placeholder simulated volume to keep standby state clean
     if 'standby_volume' not in st.session_state:
-        st.session_state.standby_volume = generate_synthetic_ct_nodule(radius=8.2, intensity_hu=150.0)
+        st.session_state.standby_volume = generate_synthetic_ct_nodule()
     active_volume = st.session_state.standby_volume
 
 # Pydantic safety validation contract check
@@ -383,6 +383,16 @@ if run_diagnostics:
     # Master Execution Triggered!
     st.toast("Executing Advanced Multi-Modal Inference...")
     t_start = time.perf_counter()
+    
+    # Dynamically regenerate simulation volume if no file was uploaded
+    if uploaded_file is None:
+        active_volume = generate_synthetic_ct_nodule(
+            age=patient_record.age,
+            smoking_pack_years=patient_record.smoking_pack_years,
+            egfr=int(patient_record.egfr == GeneticsVariant.MUTANT),
+            kras=int(patient_record.kras == GeneticsVariant.MUTANT),
+            alk=int(patient_record.alk == GeneticsVariant.MUTANT)
+        )
     
     # 1. Prep continuous clinical vector
     clin_vector = np.array([[
@@ -489,7 +499,7 @@ else:
         # Interactive threshold sliders for real-time detailed peeling
         col_t1, col_t2 = st.columns(2)
         with col_t1:
-            isomin_ct = st.slider("CT Iso-Surface Threshold", 0.05, 0.95, 0.20, step=0.01, key="ct_slider")
+            isomin_ct = st.slider("CT Iso-Surface Threshold", 0.05, 0.95, 0.18, step=0.01, key="ct_slider")
         with col_t2:
             isomin_cam = st.slider("Attention Focus Threshold", 0.05, 0.95, 0.35, step=0.01, key="cam_slider")
             
