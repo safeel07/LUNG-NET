@@ -47,7 +47,12 @@ def precompile_model_checkpoints():
     cnn_path = os.path.join(root, "weights_cnn.pth")
     swin_path = os.path.join(root, "weights_swin.pth")
     
-    import torch
+    try:
+        import torch
+    except Exception:
+        print("  [WARN] PyTorch is not available. Skipping model checkpoint pre-compilation. Falling back to analytical pipelines.")
+        print("-" * 60)
+        return
     
     # 1. Compile 3D DenseNet-121 CNN weights
     if not os.path.exists(cnn_path):

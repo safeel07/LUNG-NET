@@ -301,6 +301,8 @@ def load_and_transform_nifti(file_buffer, filename: str) -> np.ndarray:
     ranges between -1000 HU and 400 HU, and scales spatial grids precisely
     to isotropic (64, 64, 64) tensors via safe center-cropping or resampling.
     """
+    if hasattr(file_buffer, "seek"):
+        file_buffer.seek(0)
     with tempfile.NamedTemporaryFile(suffix='.nii', delete=False) as tmp_file:
         tmp_file.write(file_buffer.read())
         tmp_path = tmp_file.name
@@ -366,6 +368,8 @@ def process_2d_ct_scan(file_buffer, age=65, smoking_pack_years=48.0, egfr=0, kra
     and a custom-morphed 3D volume that matches the 2D scan features.
     """
     # 1. Load image and resize to standardized grid (256x256) for fast, robust analysis
+    if hasattr(file_buffer, "seek"):
+        file_buffer.seek(0)
     img = Image.open(file_buffer).convert("L")
     img_resized = img.resize((256, 256), Image.Resampling.LANCZOS)
     img_np = np.array(img_resized, dtype=np.float32)
@@ -472,6 +476,8 @@ def process_2d_ct_scan(file_buffer, age=65, smoking_pack_years=48.0, egfr=0, kra
             
     # 4. Generate Premium Medical HUD Overlay Image (RGB)
     # Re-open original image in RGB mode to draw neon visual components
+    if hasattr(file_buffer, "seek"):
+        file_buffer.seek(0)
     rgb_img = Image.open(file_buffer).convert("RGB").resize((256, 256), Image.Resampling.LANCZOS)
     rgb_np = np.array(rgb_img)
     

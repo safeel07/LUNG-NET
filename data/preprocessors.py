@@ -53,6 +53,8 @@ def process_clinical_ingestion(file_obj, filename):
     """
     Resamples CT voxel spacing to isotropic 1.0mm^3 spacing and window scales intensities.
     """
+    if hasattr(file_obj, "seek"):
+        file_obj.seek(0)
     with tempfile.NamedTemporaryFile(suffix='.nii', delete=False) as tmp:
         tmp.write(file_obj.read())
         tmp_path = tmp.name

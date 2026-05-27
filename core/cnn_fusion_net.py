@@ -1,11 +1,61 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+try:
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+    TORCH_AVAILABLE = True
+except Exception:
+    TORCH_AVAILABLE = False
+    torch = None
+    
+    class DummyModule:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __call__(self, *args, **kwargs):
+            return self
+        def eval(self, *args, **kwargs):
+            return self
+        def train(self, *args, **kwargs):
+            return self
+        def to(self, *args, **kwargs):
+            return self
+        def cuda(self, *args, **kwargs):
+            return self
+        def cpu(self, *args, **kwargs):
+            return self
+        def modules(self, *args, **kwargs):
+            return []
+        def parameters(self, *args, **kwargs):
+            return []
+        def state_dict(self, *args, **kwargs):
+            return {}
+        def load_state_dict(self, *args, **kwargs):
+            return self
+        def register_forward_hook(self, *args, **kwargs):
+            pass
+        def register_full_backward_hook(self, *args, **kwargs):
+            pass
+
+    class DummyNN:
+        Module = DummyModule
+        def __getattr__(self, name):
+            class DummyCallableClass(DummyModule):
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, **kwargs)
+                def __getattr__(self, item):
+                    return lambda *args, **kwargs: None
+            return DummyCallableClass
+            
+    nn = DummyNN()
+    
+    class DummyF:
+        def __getattr__(self, name):
+            return lambda *args, **kwargs: None
+    F = DummyF()
 
 try:
     from monai.networks.nets import DenseNet121
     MONAI_NET_AVAILABLE = True
-except ImportError:
+except Exception:
     MONAI_NET_AVAILABLE = False
 
 

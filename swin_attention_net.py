@@ -7,7 +7,7 @@ try:
     TORCH_AVAILABLE = True
     # Automatic cross-platform hardware device routing
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
-except ImportError:
+except Exception:
     TORCH_AVAILABLE = False
     torch = None
     nn = None

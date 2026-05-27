@@ -14,7 +14,7 @@ from medical_loader import load_and_transform_nifti, generate_synthetic_ct_nodul
 
 try:
     import torch
-except ImportError:
+except Exception:
     torch = None
 
 # Set professional layout parameters
@@ -454,6 +454,8 @@ if uploaded_file is not None:
     if file_ext in ['png', 'jpg', 'jpeg']:
         st.sidebar.info("Patient 2D scan successfully uploaded.")
     else:
+        if hasattr(uploaded_file, "seek"):
+            uploaded_file.seek(0)
         active_volume = load_and_transform_nifti(uploaded_file, uploaded_file.name)
         st.sidebar.info("Patient NIfTI scan successfully loaded.")
 else:
@@ -508,6 +510,8 @@ if run_diagnostics:
     if uploaded_file is not None:
         file_ext = uploaded_file.name.split('.')[-1].lower()
         if file_ext in ['png', 'jpg', 'jpeg']:
+            if hasattr(uploaded_file, "seek"):
+                uploaded_file.seek(0)
             overlay_bytes, metrics_2d, morphed_volume = process_2d_ct_scan(
                 uploaded_file,
                 age=patient_record.age,
@@ -521,6 +525,8 @@ if run_diagnostics:
             st.session_state.metrics_2d = metrics_2d
             st.session_state.is_2d_upload = True
         else:
+            if hasattr(uploaded_file, "seek"):
+                uploaded_file.seek(0)
             active_volume = load_and_transform_nifti(uploaded_file, uploaded_file.name)
             st.session_state.is_2d_upload = False
             st.session_state.overlay_bytes = None
